@@ -9,8 +9,6 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/my-app
   APP_DOMAIN: localhost
-  CURRENT_COLOR_FILE: /home/admin/current_color
-  TRAEFIK_DYNAMIC_FILE: /srv/traefik/dynamic.yml
 
 jobs:
   build-and-push:
@@ -64,7 +62,7 @@ jobs:
             IMAGE="${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
             APP_DOMAIN="${{ env.APP_DOMAIN }}"
 
-            CURRENT_COLOR_PATH="/var/app/current_color"
+            CURRENT_COLOR_PATH="/home/admin/current_color"
             TRAEFIK_DYNAMIC_FILE="/srv/traefik/dynamic.yml"
 
             echo "=== Image à déployer : $IMAGE ==="
