@@ -46,87 +46,95 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
 
   deploy-blue-green:
-    name: Blue-Green Deploy on single server
+    name: Blue-Green Deploy on server
     needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy to server (blue-green)
+      - name: Deploy (blue-green)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            set -e
+            set -euo pipefail
 
-            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
-            IMAGE="${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+            # 1) Config en dur côté serveur
+            IMAGE="${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
+            APP_DOMAIN="${{ env.APP_DOMAIN }}"
 
             CURRENT_COLOR_PATH="/var/app/current_color"
+            TRAEFIK_DYNAMIC_FILE="/srv/traefik/dynamic.yml"
 
-            echo "=== Image à déployer : ${IMAGE} ==="
+            echo "=== Image à déployer : $IMAGE ==="
+            echo "Fichier de couleur utilisé : $CURRENT_COLOR_PATH"
 
-            # 1) Couleur actuelle
-            if [ -f "${CURRENT_COLOR_FILE}" ]; then
-              CURRENT_COLOR=$(cat "${CURRENT_COLOR_FILE}")
-              echo "Couleur actuelle détectée : ${CURRENT_COLOR}"
+            # 2) S'assurer que le dossier existe
+            mkdir -p "$(dirname "$CURRENT_COLOR_PATH")"
+
+            # 3) Lire / init la couleur actuelle
+            if [ -f "$CURRENT_COLOR_PATH" ]; then
+              CURRENT_COLOR="$(cat "$CURRENT_COLOR_PATH")"
+              echo "Couleur actuelle détectée : $CURRENT_COLOR"
             else
-              echo "Fichier current_color absent, on init à 'blue'"
+              echo "Fichier $CURRENT_COLOR_PATH absent, on init à 'blue'"
               CURRENT_COLOR="blue"
-              echo "blue" > "${CURRENT_COLOR_FILE}"
+              echo "blue" > "$CURRENT_COLOR_PATH"
             fi
 
-            if [ "${CURRENT_COLOR}" = "blue" ]; then
+            if [ "$CURRENT_COLOR" = "blue" ]; then
               NEW_COLOR="green"
             else
               NEW_COLOR="blue"
             fi
 
-            echo "Nouvelle couleur à déployer : ${NEW_COLOR}"
+            echo "Nouvelle couleur à déployer : $NEW_COLOR"
 
-            NEW_CONTAINER="app-${NEW_COLOR}"
-            OLD_CONTAINER="app-${CURRENT_COLOR}"
+            NEW_CONTAINER="app-$NEW_COLOR"
+            OLD_CONTAINER="app-$CURRENT_COLOR"
 
-            # 2) Pull image
-            docker pull "${IMAGE}"
+            # 4) Pull image
+            docker pull "$IMAGE"
 
-            # 3) Recreate conteneur NEW_COLOR
-            docker rm -f "${NEW_CONTAINER}" || true
+            # 5) Recreate conteneur NEW_COLOR
+            echo "Recréation du conteneur $NEW_CONTAINER"
+            docker rm -f "$NEW_CONTAINER" || true
 
-            APP_PORT=80
+            APP_PORT=80  # adapte si ton app écoute sur un autre port dans le container
 
             docker run -d \
-              --name "${NEW_CONTAINER}" \
+              --name "$NEW_CONTAINER" \
               --label "traefik.enable=true" \
-              --label "traefik.http.services.app-${NEW_COLOR}.loadbalancer.server.port=${APP_PORT}" \
-              --label "traefik.http.routers.app-${NEW_COLOR}-test.rule=Host(\`${NEW_COLOR}.${APP_DOMAIN}\`)" \
-              --label "traefik.http.routers.app-${NEW_COLOR}-test.entrypoints=web" \
-              --label "traefik.http.routers.app-${NEW_COLOR}-test.service=app-${NEW_COLOR}" \
-              "${IMAGE}"
+              --label "traefik.http.services.app-$NEW_COLOR.loadbalancer.server.port=$APP_PORT" \
+              --label "traefik.http.routers.app-$NEW_COLOR-test.rule=Host(\`$NEW_COLOR.$APP_DOMAIN\`)" \
+              --label "traefik.http.routers.app-$NEW_COLOR-test.entrypoints=web" \
+              --label "traefik.http.routers.app-$NEW_COLOR-test.service=app-$NEW_COLOR" \
+              "$IMAGE"
 
-            # 4) Healthcheck sur la nouvelle couleur
-            echo "=== Attente du /health sur ${NEW_COLOR}.${APP_DOMAIN} ==="
-            until curl -fsS "http://${NEW_COLOR}.${APP_DOMAIN}/health" > /dev/null; do
-              echo "En attente que ${NEW_COLOR} soit UP..."
+            # 6) Healthcheck
+            echo "=== Attente du /health sur $NEW_COLOR.$APP_DOMAIN ==="
+            until curl -fsS "http://$NEW_COLOR.$APP_DOMAIN/health" > /dev/null; do
+              echo "En attente que $NEW_COLOR soit UP..."
               sleep 3
             done
+            echo "$NEW_COLOR est UP 🎉"
 
-            # 5) Switch dans dynamic.yml
-            if [ ! -f "${TRAEFIK_DYNAMIC_FILE}" ]; then
-              echo "ERREUR: fichier ${TRAEFIK_DYNAMIC_FILE} introuvable"
+            # 7) Switch Traefik
+            if [ ! -f "$TRAEFIK_DYNAMIC_FILE" ]; then
+              echo "ERREUR: fichier $TRAEFIK_DYNAMIC_FILE introuvable"
               exit 1
             fi
 
-            echo "=== Switch Traefik vers ${NEW_COLOR} ==="
-            sed -i "s/service: app-${CURRENT_COLOR}@docker/service: app-${NEW_COLOR}@docker/" "${TRAEFIK_DYNAMIC_FILE}"
+            echo "=== Switch Traefik vers $NEW_COLOR ==="
+            sed -i "s/service: app-$CURRENT_COLOR@docker/service: app-$NEW_COLOR@docker/" "$TRAEFIK_DYNAMIC_FILE"
 
-            echo "Contenu dynamique Traefik :"
-            grep "service:" "${TRAEFIK_DYNAMIC_FILE}" || true
+            echo "Ligne service actuelle dans $TRAEFIK_DYNAMIC_FILE :"
+            grep "service:" "$TRAEFIK_DYNAMIC_FILE" || true
 
-            # 6) Sauvegarder nouvelle couleur
-            echo "${NEW_COLOR}" > "${CURRENT_COLOR_FILE}"
-            echo "Couleur actuelle mise à jour : ${NEW_COLOR}"
+            # 8) Sauvegarder la nouvelle couleur
+            echo "$NEW_COLOR" > "$CURRENT_COLOR_PATH"
+            echo "Couleur actuelle mise à jour : $NEW_COLOR"
 
-            echo "=== Déploiement blue-green terminé ==="
-            echo "Prod => ${NEW_COLOR}, ancien conteneur encore dispo : ${OLD_CONTAINER}"
+            echo "=== Blue-green terminé ==="
+            echo "Prod => $NEW_COLOR, ancien conteneur encore présent : $OLD_CONTAINER"
