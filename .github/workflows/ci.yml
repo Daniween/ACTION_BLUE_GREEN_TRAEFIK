@@ -101,7 +101,7 @@ jobs:
             echo "Recréation du conteneur $NEW_CONTAINER"
             docker rm -f "$NEW_CONTAINER" || true
 
-            APP_PORT=80  # adapte si ton app écoute sur un autre port dans le container
+            APP_PORT=8000
 
             docker run -d \
               --name "$NEW_CONTAINER" \
