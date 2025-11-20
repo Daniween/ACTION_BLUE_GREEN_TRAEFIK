@@ -1,4 +1,4 @@
-name: Blue-Green Deploy with Traefik (Docker Hub)
+name: Blue-Green Deploy with Traefik
 
 on:
   push:
@@ -9,13 +9,12 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/my-app
   APP_DOMAIN: monapp.example.com
-
   CURRENT_COLOR_FILE: /var/app/current_color
   TRAEFIK_DYNAMIC_FILE: /srv/traefik/dynamic.yml
 
 jobs:
   build-and-push:
-    name: Build & Push Docker Image to Docker Hub
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
 
     outputs:
@@ -30,12 +29,12 @@ jobs:
         run: |
           echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Login to Docker Hub
+      - name: Login to registry
         uses: docker/login-action@v3
         with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
 
       - name: Build & Push
         uses: docker/build-push-action@v6
@@ -47,30 +46,31 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
 
   deploy-blue-green:
-    name: Blue-Green Deploy on server
+    name: Blue-Green Deploy on single server
     needs: build-and-push
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy (blue-green)
+      - name: Deploy to server (blue-green)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-
           script: |
             set -e
 
-            IMAGE_TAG="latest"
+            IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
             IMAGE="${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
-            echo "=== Deploying ${IMAGE} ==="
+            echo "=== Image à déployer : ${IMAGE} ==="
 
-            # Lire couleur actuelle
+            # 1) Couleur actuelle
             if [ -f "${CURRENT_COLOR_FILE}" ]; then
               CURRENT_COLOR=$(cat "${CURRENT_COLOR_FILE}")
+              echo "Couleur actuelle détectée : ${CURRENT_COLOR}"
             else
+              echo "Fichier current_color absent, on init à 'blue'"
               CURRENT_COLOR="blue"
               echo "blue" > "${CURRENT_COLOR_FILE}"
             fi
@@ -81,33 +81,50 @@ jobs:
               NEW_COLOR="blue"
             fi
 
+            echo "Nouvelle couleur à déployer : ${NEW_COLOR}"
+
             NEW_CONTAINER="app-${NEW_COLOR}"
             OLD_CONTAINER="app-${CURRENT_COLOR}"
 
-            # Pull image depuis Docker Hub
+            # 2) Pull image
             docker pull "${IMAGE}"
 
-            # Recreate conteneur
+            # 3) Recreate conteneur NEW_COLOR
             docker rm -f "${NEW_CONTAINER}" || true
+
+            APP_PORT=80
 
             docker run -d \
               --name "${NEW_CONTAINER}" \
               --label "traefik.enable=true" \
-              --label "traefik.http.services.app-${NEW_COLOR}.loadbalancer.server.port=80" \
+              --label "traefik.http.services.app-${NEW_COLOR}.loadbalancer.server.port=${APP_PORT}" \
               --label "traefik.http.routers.app-${NEW_COLOR}-test.rule=Host(\`${NEW_COLOR}.${APP_DOMAIN}\`)" \
               --label "traefik.http.routers.app-${NEW_COLOR}-test.entrypoints=web" \
               --label "traefik.http.routers.app-${NEW_COLOR}-test.service=app-${NEW_COLOR}" \
               "${IMAGE}"
 
-            # Attendre healthcheck
+            # 4) Healthcheck sur la nouvelle couleur
+            echo "=== Attente du /health sur ${NEW_COLOR}.${APP_DOMAIN} ==="
             until curl -fsS "http://${NEW_COLOR}.${APP_DOMAIN}/health" > /dev/null; do
+              echo "En attente que ${NEW_COLOR} soit UP..."
               sleep 3
             done
 
-            # Modifier dynamic.yml
+            # 5) Switch dans dynamic.yml
+            if [ ! -f "${TRAEFIK_DYNAMIC_FILE}" ]; then
+              echo "ERREUR: fichier ${TRAEFIK_DYNAMIC_FILE} introuvable"
+              exit 1
+            fi
+
+            echo "=== Switch Traefik vers ${NEW_COLOR} ==="
             sed -i "s/service: app-${CURRENT_COLOR}@docker/service: app-${NEW_COLOR}@docker/" "${TRAEFIK_DYNAMIC_FILE}"
 
-            # Couleur actuelle mise à jour
-            echo "${NEW_COLOR}" > "${CURRENT_COLOR_FILE}"
+            echo "Contenu dynamique Traefik :"
+            grep "service:" "${TRAEFIK_DYNAMIC_FILE}" || true
 
-            echo "Blue-green switch complete -> Prod = ${NEW_COLOR}"
+            # 6) Sauvegarder nouvelle couleur
+            echo "${NEW_COLOR}" > "${CURRENT_COLOR_FILE}"
+            echo "Couleur actuelle mise à jour : ${NEW_COLOR}"
+
+            echo "=== Déploiement blue-green terminé ==="
+            echo "Prod => ${NEW_COLOR}, ancien conteneur encore dispo : ${OLD_CONTAINER}"
