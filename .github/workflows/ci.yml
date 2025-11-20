@@ -63,6 +63,8 @@ jobs:
             IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
             IMAGE="${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
 
+            CURRENT_COLOR_PATH="/var/app/current_color"
+
             echo "=== Image à déployer : ${IMAGE} ==="
 
             # 1) Couleur actuelle
