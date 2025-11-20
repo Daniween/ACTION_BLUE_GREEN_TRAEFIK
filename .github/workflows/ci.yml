@@ -9,7 +9,7 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/my-app
   APP_DOMAIN: localhost
-  CURRENT_COLOR_FILE: /var/app/current_color
+  CURRENT_COLOR_FILE: /home/admin/current_color
   TRAEFIK_DYNAMIC_FILE: /srv/traefik/dynamic.yml
 
 jobs:
@@ -114,7 +114,7 @@ jobs:
               "$IMAGE"
 
             # 6) Healthcheck
-            echo "=== Attente du /health sur $NEW_COLOR.$APP_DOMAIN ==="
+            echo "=== Attente du /health sur $APP_DOMAIN ==="
             until curl -fsS http://127.0.0.1/health > /dev/null; do
               echo "En attente que $NEW_COLOR soit UP..."
               sleep 3
