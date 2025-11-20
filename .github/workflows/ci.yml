@@ -114,7 +114,7 @@ jobs:
 
             # 6) Healthcheck
             echo "=== Attente du /health sur $NEW_COLOR.$APP_DOMAIN ==="
-            until curl -v -H "Host: ${NEW_COLOR}.localhost" http://127.0.0.1/health > /dev/null; do
+            until curl -fsS http://127.0.0.1/health > /dev/null; do
               echo "En attente que $NEW_COLOR soit UP..."
               sleep 3
             done
