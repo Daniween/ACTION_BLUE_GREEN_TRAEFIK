@@ -58,7 +58,7 @@ jobs:
           script: |
             set -euo pipefail
 
-            # 1) Config en dur côté serveur
+            # 1) Config côté serveur
             IMAGE="${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
             APP_DOMAIN="${{ env.APP_DOMAIN }}"
 
