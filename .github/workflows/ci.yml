@@ -106,9 +106,6 @@ jobs:
               --network traefik_web \
               --label "traefik.enable=true" \
               --label "traefik.http.services.app-$NEW_COLOR.loadbalancer.server.port=$APP_PORT" \
-              --label "traefik.http.routers.app-$NEW_COLOR-test.rule=Host(\`$NEW_COLOR.$APP_DOMAIN\`)" \
-              --label "traefik.http.routers.app-$NEW_COLOR-test.entrypoints=web" \
-              --label "traefik.http.routers.app-$NEW_COLOR-test.service=app-$NEW_COLOR" \
               "$IMAGE"
 
             # 6) Healthcheck
